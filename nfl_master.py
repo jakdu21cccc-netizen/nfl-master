@@ -32,7 +32,6 @@ st.markdown("""
     /* ==========================================
        1. 매치업 선택 카드 UI (독립된 카드 전체 클릭 방식)
        ========================================== */
-    /* 매치업 버튼 자체를 60px짜리 거대한 카드 형태로 스타일링 */
     div[data-testid="stColumn"] div[data-testid="stButton"] > button {
         height: 60px !important;
         background-color: #1E1E1E !important;
@@ -41,17 +40,15 @@ st.markdown("""
         transition: 0.2s !important;
         padding: 0 !important;
         position: relative;
-        z-index: 1; /* 로고 뒤에 위치하지만 클릭 이벤트는 받음 */
+        z-index: 1;
     }
     
-    /* 카드에 마우스 오버 시 하이라이트 효과 */
     div[data-testid="stColumn"] div[data-testid="stButton"] > button:hover {
         border-color: #28a745 !important;
         background-color: #252830 !important;
         box-shadow: 0 4px 10px rgba(40, 167, 69, 0.4) !important;
     }
     
-    /* 버튼 내부의 텍스트(투명문자)는 공간을 차지하지 않도록 완전 삭제 */
     div[data-testid="stColumn"] div[data-testid="stButton"] p {
         display: none !important; 
     }
@@ -59,9 +56,6 @@ st.markdown("""
     /* ==========================================
        2. 하단 스탯 행 (Basic Stats 등) 뚜렷한 카드화
        ========================================== */
-    /* 행 카드: render_stat이 st.container(key="statrow-N")로 만든 컨테이너를 클래스(st-key-statrow*)로 지정.
-       (data-testid는 Streamlit 버전마다 바뀌어서 사용하지 않음 / :not(:has()) 는 같은 클래스가 겹쳐 붙어도 한 번만 적용되게 함)
-       행 간격 = Streamlit 기본 gap(1rem) + margin-bottom(-0.5rem) = 약 0.5rem. 더 좁히려면 -0.5rem을 더 작게(-0.7rem) */
     div[class*="st-key-statrow"]:not(:has(div[class*="st-key-statrow"])) {
         box-sizing: border-box;
         border-radius: 12px;
@@ -97,7 +91,6 @@ st.markdown("""
 
     /* ==========================================
        4. 섹션 이동 핸들 (st.segmented_control)
-       - 버전별 testid 차이를 대비해 선택 상태는 여러 셀렉터를 함께 지정
        ========================================== */
     div[data-testid="stButtonGroup"] button[data-testid="stBaseButton-segmented_control"] {
         background-color: #1E1E1E !important; border: 1px solid #333 !important; color: #CCC !important;
@@ -126,7 +119,7 @@ def load_team_logos():
 try:
     team_logos = load_team_logos()
 except Exception:
-    team_logos = {}  # 실패 결과는 캐시되지 않으므로 다음 실행 때 재시도됨
+    team_logos = {}
 
 # ==========================================
 # 0-1단계: 스케줄 로드
@@ -135,7 +128,6 @@ except Exception:
 def load_schedule(year):
     return nfl.import_schedules([year])
 
-
 def get_schedule(year):
     try:
         return load_schedule(year)
@@ -143,7 +135,7 @@ def get_schedule(year):
         return pd.DataFrame()
 
 # ==========================================
-# 0-2단계: 연도별 데이터 로드 및 마스터 엔진 
+# 0-2단계: PBP 로우 데이터 및 시즌 통계 엔진
 # ==========================================
 DIVISION_DICT = {
     'WAS': ('NFC', '동부'), 'DAL': ('NFC', '동부'), 'PHI': ('NFC', '동부'), 'NYG': ('NFC', '동부'),
@@ -157,16 +149,20 @@ DIVISION_DICT = {
 }
 
 @st.cache_data(ttl=3600)
-def load_and_calculate_stats(year):
+def load_raw_pbp(year):
     url = f"https://github.com/nflverse/nflverse-data/releases/download/pbp/play_by_play_{year}.csv.gz"
-    pbp = pd.read_csv(url, compression='gzip', low_memory=False)
+    return pd.read_csv(url, compression='gzip', low_memory=False)
+
+@st.cache_data(ttl=3600)
+def load_and_calculate_stats(year):
+    pbp = load_raw_pbp(year)
     if 'season_type' in pbp.columns:
-        pbp = pbp[pbp['season_type'] == 'REG'].copy()  # 플레이오프 제외
+        pbp = pbp[pbp['season_type'] == 'REG'].copy()
     pbp_clean = pbp[pbp['play_type'].isin(['pass', 'run'])].copy()
     
     sched = get_schedule(year)
     if not sched.empty and 'game_type' in sched.columns:
-        sched = sched[sched['game_type'] == 'REG']  # 플레이오프 제외
+        sched = sched[sched['game_type'] == 'REG']
     sched = sched.dropna(subset=['home_score', 'away_score']) if not sched.empty else pd.DataFrame()
         
     teams = [t for t in pbp_clean['posteam'].dropna().unique() if isinstance(t, str)]
@@ -244,7 +240,6 @@ def load_and_calculate_stats(year):
         pass_ratio = float(len(off_pass) / len(offense) * 100) if len(offense) > 0 else 0.0
         run_ratio = float(len(off_run) / len(offense) * 100) if len(offense) > 0 else 0.0
         
-        # 다운 컨버전은 nflverse의 converted/failed 컬럼 사용 (EPA 기반 'success'와 다름)
         def _conv(df, kind):
             conv = int(df[f'{kind}_down_converted'].sum())
             fail = int(df[f'{kind}_down_failed'].sum())
@@ -263,17 +258,16 @@ def load_and_calculate_stats(year):
         def_4th_stop = float(def_4th_stop_cnt / def_4th_att * 100) if def_4th_att > 0 else 0.0
         
         def _drive_count(df):
-            # drive 번호는 경기 안에서만 유니크 -> (game_id, drive) 쌍으로 계산
             return df.dropna(subset=['drive'])[['game_id', 'drive']].drop_duplicates().shape[0]
 
         rz_off = offense[offense['yardline_100'] <= 20]
         rz_off_drives = _drive_count(rz_off)
-        rz_off_td_drives = _drive_count(rz_off[rz_off['td_team'] == team_abbr])  # 공격팀 본인이 넣은 TD만
+        rz_off_td_drives = _drive_count(rz_off[rz_off['td_team'] == team_abbr])
         rz_off_pct = float(rz_off_td_drives / rz_off_drives * 100) if rz_off_drives > 0 else 0.0
 
         rz_def = defense[defense['yardline_100'] <= 20]
         rz_def_drives = _drive_count(rz_def)
-        rz_def_td_drives = _drive_count(rz_def[rz_def['td_team'] == rz_def['posteam']])  # 상대 공격팀이 넣은 TD만 (수비 TD 제외)
+        rz_def_td_drives = _drive_count(rz_def[rz_def['td_team'] == rz_def['posteam']])
         rz_def_pct = float(rz_def_td_drives / rz_def_drives * 100) if rz_def_drives > 0 else 0.0
         
         qb_stat = off_pass['epa'].mean() if not off_pass.empty else 0
@@ -333,6 +327,209 @@ def load_and_calculate_stats(year):
     return df
 
 # ==========================================
+# 단일 경기 팀 상세 스탯 (박스스코어) 계산 및 모달 팝업
+# ==========================================
+def calculate_game_boxscore(game_pbp, away_team, home_team):
+    results = {}
+    for team in [away_team, home_team]:
+        off = game_pbp[game_pbp['posteam'] == team]
+        
+        # 1st Downs
+        fd_pass = int(off['first_down_pass'].sum()) if 'first_down_pass' in off.columns else 0
+        fd_rush = int(off['first_down_rush'].sum()) if 'first_down_rush' in off.columns else 0
+        fd_pen = int(off['first_down_penalty'].sum()) if 'first_down_penalty' in off.columns else 0
+        fd_tot = fd_pass + fd_rush + fd_pen
+        
+        # 3rd & 4th Down Efficiency
+        def _eff(df, down):
+            c_col = f'{down}_down_converted'
+            f_col = f'{down}_down_failed'
+            conv = int(df[c_col].sum()) if c_col in df.columns else 0
+            fail = int(df[f_col].sum()) if f_col in df.columns else 0
+            return f"{conv}-{conv + fail}"
+        
+        eff_3rd = _eff(off, 'third')
+        eff_4th = _eff(off, 'fourth')
+        
+        # Plays & Yards
+        off_scrimmage = off[off['play_type'].isin(['pass', 'run', 'qb_kneel', 'qb_spike'])]
+        total_plays = len(off_scrimmage)
+        pass_plays = off[off['play_type'] == 'pass']
+        run_plays = off[off['play_type'] == 'run']
+        
+        pass_yds = int(pass_plays['yards_gained'].sum()) if not pass_plays.empty else 0
+        run_yds = int(run_plays['yards_gained'].sum()) if not run_plays.empty else 0
+        tot_yds = pass_yds + run_yds
+        
+        drives_cnt = off.dropna(subset=['drive'])['drive'].nunique() if 'drive' in off.columns else 0
+        ypp = round(tot_yds / total_plays, 1) if total_plays > 0 else 0.0
+        
+        # Passing details
+        comp = int(off['complete_pass'].sum()) if 'complete_pass' in off.columns else 0
+        att = int(off['pass_attempt'].sum()) if 'pass_attempt' in off.columns else 0
+        comp_att = f"{comp}/{att}"
+        yppass = round(pass_yds / att, 1) if att > 0 else 0.0
+        int_thrown = int(off['interception'].sum()) if 'interception' in off.columns else 0
+        
+        sacks = int(off['sack'].sum()) if 'sack' in off.columns else 0
+        sack_plays = off[off['sack'] == 1]
+        sack_yds = int(abs(sack_plays['yards_gained'].sum())) if not sack_plays.empty else 0
+        sacks_str = f"{sacks}-{sack_yds}"
+        
+        # Rushing details
+        rush_att = len(run_plays)
+        yprush = round(run_yds / rush_att, 1) if rush_att > 0 else 0.0
+        
+        # Red Zone (Made-Att)
+        rz_plays = off[off['yardline_100'] <= 20] if 'yardline_100' in off.columns else pd.DataFrame()
+        if not rz_plays.empty and 'drive' in rz_plays.columns:
+            rz_drives = rz_plays['drive'].nunique()
+            rz_tds = rz_plays[rz_plays['touchdown'] == 1]['drive'].nunique()
+            rz_str = f"{rz_tds}-{rz_drives}"
+        else:
+            rz_str = "0-0"
+            
+        # Penalties
+        pen_plays = game_pbp[game_pbp['penalty_team'] == team] if 'penalty_team' in game_pbp.columns else pd.DataFrame()
+        pen_cnt = int(pen_plays['penalty'].sum()) if not pen_plays.empty and 'penalty' in pen_plays.columns else 0
+        pen_yds = int(pen_plays['penalty_yards'].sum()) if not pen_plays.empty and 'penalty_yards' in pen_plays.columns else 0
+        pen_str = f"{pen_cnt}-{pen_yds}"
+        
+        # Turnovers
+        fum_lost = int(off['fumble_lost'].sum()) if 'fumble_lost' in off.columns else 0
+        to_tot = fum_lost + int_thrown
+        
+        # Defensive / Special Teams TDs
+        dst_td_plays = game_pbp[(game_pbp['td_team'] == team) & ((game_pbp['defteam'] == team) | (game_pbp['play_type'].isin(['punt', 'kickoff', 'field_goal'])))]
+        dst_td = int(dst_td_plays['touchdown'].sum()) if not dst_td_plays.empty and 'touchdown' in dst_td_plays.columns else 0
+        
+        # Possession Time (TOP)
+        top_str = "00:00"
+        if 'drive_time_of_possession' in off.columns and 'drive' in off.columns:
+            d_top = off.dropna(subset=['drive', 'drive_time_of_possession']).drop_duplicates(subset=['drive'])
+            tot_sec = 0
+            for t_val in d_top['drive_time_of_possession']:
+                try:
+                    parts = str(t_val).split(':')
+                    tot_sec += int(parts[0]) * 60 + int(parts[1])
+                except Exception:
+                    pass
+            top_str = f"{tot_sec // 60:02d}:{tot_sec % 60:02d}"
+            
+        results[team] = {
+            '1st Downs': fd_tot,
+            'Passing 1st downs': fd_pass,
+            'Rushing 1st downs': fd_rush,
+            '1st downs from penalties': fd_pen,
+            '3rd down efficiency': eff_3rd,
+            '4th down efficiency': eff_4th,
+            'Total Plays': total_plays,
+            'Total Yards': tot_yds,
+            'Total Drives': drives_cnt,
+            'Yards per Play': ypp,
+            'Passing': pass_yds,
+            'Comp/Att': comp_att,
+            'Yards per pass': yppass,
+            'Interceptions thrown': int_thrown,
+            'Sacks-Yards Lost': sacks_str,
+            'Rushing': run_yds,
+            'Rushing Attempts': rush_att,
+            'Yards per rush': yprush,
+            'Red Zone (Made-Att)': rz_str,
+            'Penalties': pen_str,
+            'Turnovers': to_tot,
+            'Fumbles lost': fum_lost,
+            'Interceptions': int_thrown,
+            'Defensive / Special Teams TDs': dst_td,
+            'Possession': top_str
+        }
+    return results
+
+def render_boxscore_table_html(away, home, stats_dict, a_score, h_score):
+    away_logo = team_logos.get(away, {}).get('team_logo_espn', '')
+    home_logo = team_logos.get(home, {}).get('team_logo_espn', '')
+    
+    stat_rows = [
+        ("1st Downs", "1st Downs", True),
+        ("Passing 1st downs", "Passing 1st downs", False),
+        ("Rushing 1st downs", "Rushing 1st downs", False),
+        ("1st downs from penalties", "1st downs from penalties", False),
+        ("3rd down efficiency", "3rd down efficiency", True),
+        ("4th down efficiency", "4th down efficiency", True),
+        ("Total Plays", "Total Plays", True),
+        ("Total Yards", "Total Yards", True),
+        ("Total Drives", "Total Drives", True),
+        ("Yards per Play", "Yards per Play", True),
+        ("Passing", "Passing", True),
+        ("Comp/Att", "Comp/Att", False),
+        ("Yards per pass", "Yards per pass", False),
+        ("Interceptions thrown", "Interceptions thrown", False),
+        ("Sacks-Yards Lost", "Sacks-Yards Lost", False),
+        ("Rushing", "Rushing", True),
+        ("Rushing Attempts", "Rushing Attempts", False),
+        ("Yards per rush", "Yards per rush", False),
+        ("Red Zone (Made-Att)", "Red Zone (Made-Att)", True),
+        ("Penalties", "Penalties", True),
+        ("Turnovers", "Turnovers", True),
+        ("Fumbles lost", "Fumbles lost", False),
+        ("Interceptions thrown", "Interceptions", False),
+        ("Defensive / Special Teams TDs", "Defensive / Special Teams TDs", True),
+        ("Possession", "Possession", True),
+    ]
+    
+    a_stat = stats_dict.get(away, {})
+    h_stat = stats_dict.get(home, {})
+
+    html = "<div style='font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif; background-color:#161922; border-radius:12px; padding:15px; border:1px solid #333;'>"
+    html += "<table style='width:100%; border-collapse:collapse; color:#FAFAFA;'>"
+    
+    # 상단 로고 및 최종 스코어 헤더
+    html += "<tr style='border-bottom: 2px solid #444;'>"
+    html += "<th style='text-align:left; padding:12px 10px; font-size:16px; color:#AAA;'>Team Stats</th>"
+    html += f"<th style='text-align:center; padding:12px 10px; width:130px;'><img src='{away_logo}' width='42'><br><span style='font-size:22px; font-weight:800;'>{int(a_score)}</span></th>"
+    html += f"<th style='text-align:center; padding:12px 10px; width:130px;'><img src='{home_logo}' width='42'><br><span style='font-size:22px; font-weight:800;'>{int(h_score)}</span></th>"
+    html += "</tr>"
+    
+    for label, key, is_major in stat_rows:
+        val_a = a_stat.get(key, "-")
+        val_h = h_stat.get(key, "-")
+        
+        if is_major:
+            row_style = "font-weight: 700; color: #FFFFFF; font-size: 15px; background-color: rgba(255, 255, 255, 0.02); border-bottom: 1px solid #282C35;"
+            pad_left = "12px"
+        else:
+            row_style = "font-weight: 400; color: #9AA0A6; font-size: 14px; border-bottom: 1px solid #1E222B;"
+            pad_left = "28px"
+            
+        html += f"<tr style='{row_style}'>"
+        html += f"<td style='padding: 8px 10px 8px {pad_left};'>{label}</td>"
+        html += f"<td style='text-align: center; padding: 8px 10px;'>{val_a}</td>"
+        html += f"<td style='text-align: center; padding: 8px 10px;'>{val_h}</td>"
+        html += "</tr>"
+        
+    html += "</table></div>"
+    return html
+
+# 모달 다이얼로그 함수
+if hasattr(st, "dialog"):
+    @st.dialog("🏈 경기 팀 세부 스탯 (Team Box Score)", width="large")
+    def show_game_boxscore_modal(game_id, away, home, a_score, h_score, year):
+        with st.spinner("경기 플레이 데이터를 집계하는 중입니다..."):
+            try:
+                pbp = load_raw_pbp(year)
+                game_pbp = pbp[pbp['game_id'] == game_id]
+                if game_pbp.empty:
+                    st.warning("해당 경기의 세부 데이터가 아직 수집되지 않았습니다.")
+                    return
+                stats_dict = calculate_game_boxscore(game_pbp, away, home)
+                st.markdown(render_boxscore_table_html(away, home, stats_dict, a_score, h_score), unsafe_allow_html=True)
+            except Exception as e:
+                st.error(f"스탯을 불러오는 도중 오류가 발생했습니다: {e}")
+else:
+    def show_game_boxscore_modal(game_id, away, home, a_score, h_score, year):
+        st.session_state['active_boxscore'] = (game_id, away, home, a_score, h_score, year)
+
+# ==========================================
 # 레이아웃 1. 상단 컨트롤
 # ==========================================
 st.markdown("<h1 style='text-align: center; color: #FAFAFA; font-weight: 800; font-size: 40px; margin-top: -30px;'>🏈 NFL Advanced Analytics</h1>", unsafe_allow_html=True)
@@ -340,7 +537,7 @@ st.markdown("<p style='text-align: center; color: #888; font-size: 14px; margin-
 
 ctrl_col1, ctrl_col2, ctrl_col3, ctrl_col4 = st.columns([1, 1, 1, 1])
 with ctrl_col2:
-    selected_year = st.selectbox("🗓️ 시즌 (Year)", [2026, 2025, 2024], index=0)
+    selected_year = st.selectbox("🗓️️ 시즌 (Year)", [2026, 2025, 2024], index=0)
 
 sched_df = get_schedule(selected_year)
 if not sched_df.empty:
@@ -361,22 +558,16 @@ if 'current_week' not in st.session_state or st.session_state['current_week'] !=
 st.divider()
 
 # ==========================================
-# 매치업 카드 오버레이 HTML (종료된 경기는 점수 표시)
+# 매치업 카드 오버레이 HTML
 # ==========================================
-# 오버레이 세로 위치 보정값(px). 스크린샷 실측 기준 기존 -76px에서 약 9px 아래로 쳐져 있어 -85px로 보정.
-# 그래도 위/아래로 어긋나 보이면 이 값만 1~2px씩 조절하세요. (더 작게(-87) = 위로, 더 크게(-83) = 아래로)
 CARD_OVERLAY_OFFSET = -85
 WEEKDAY_KO = ['월', '화', '수', '목', '금', '토', '일']
 
 def schedule_label(row):
-    """미진행 경기 카드 하단용 일정 문구. 예: '10/12(일) 13:00 ET' (정보가 없으면 빈 문자열)"""
     gd, gt = row.get('gameday'), row.get('gametime')
-    if pd.isna(gd):
-        return ""
-    try:
-        d = pd.to_datetime(gd)
-    except Exception:
-        return ""
+    if pd.isna(gd): return ""
+    try: d = pd.to_datetime(gd)
+    except Exception: return ""
     label = f"{d.month}/{d.day}({WEEKDAY_KO[d.weekday()]})"
     if pd.notna(gt) and str(gt).strip():
         label += f" {str(gt).strip()[:5]} ET"
@@ -388,7 +579,6 @@ def matchup_card_html(row, away_logo, home_logo):
     footer_text = ""
 
     if pd.notna(a_score) and pd.notna(h_score):
-        # 종료된 경기: 점수 + FINAL
         a, h = int(a_score), int(h_score)
         a_col, a_wt = ("#FFFFFF", 800) if a >= h else ("#9AA0A6", 600)
         h_col, h_wt = ("#FFFFFF", 800) if h >= a else ("#9AA0A6", 600)
@@ -397,15 +587,12 @@ def matchup_card_html(row, away_logo, home_logo):
         ot = row.get('overtime')
         footer_text = "FINAL/OT" if pd.notna(ot) and int(ot) == 1 else "FINAL"
     else:
-        # 아직 진행되지 않은 경기: 하단에 일정
         footer_text = schedule_label(row)
 
-    # 하단 문구가 있으면 그 공간만큼 로고/점수 줄을 위로 올림 (없으면 카드 정중앙)
     pad_bottom = 10 if footer_text else 0
     if footer_text:
         footer = f"<div style='position:absolute;bottom:3px;left:0;right:0;text-align:center;font-size:10px;font-weight:600;letter-spacing:0.5px;color:#8B8F98;'>{footer_text}</div>"
 
-    # 주의: HTML 안에 빈 줄이 생기면 마크다운이 블록을 끊을 수 있어서 한 줄로 이어 붙임
     return (
         f"<div style='pointer-events:none; margin-top:{CARD_OVERLAY_OFFSET}px; height:60px; box-sizing:border-box; "
         f"padding-bottom:{pad_bottom}px; display:flex; align-items:center; justify-content:center; "
@@ -417,14 +604,13 @@ def matchup_card_html(row, away_logo, home_logo):
     )
 
 # ==========================================
-# 레이아웃 2. 매치업 선택 카드 그리드 (버그 완벽 수정본)
+# 레이아웃 2. 매치업 선택 카드 그리드
 # ==========================================
 st.markdown(f"<h3 style='text-align: center; color: #CCC; margin-bottom: 30px;'>{selected_year} Season - Week {selected_week} Matchups</h3>", unsafe_allow_html=True)
 
 if not sched_df.empty:
     week_games = sched_df[sched_df['week'] == selected_week].reset_index(drop=True)
     if not week_games.empty:
-        # 8열(2줄) 콤팩트 배치
         cols = st.columns(8)
         for i, row in week_games.iterrows():
             away, home = row['away_team'], row['home_team']
@@ -432,11 +618,13 @@ if not sched_df.empty:
             home_logo = team_logos.get(home, {}).get('team_logo_espn', '')
             
             with cols[i % 8]:
-                # 1. 뼈대가 되는 진짜 '클릭 버튼' 렌더링 (CSS를 통해 60px 카드로 형태 변환 완료)
+                # 카드 버튼 클릭 이벤트
                 if st.button(" ", key=f"btn_{away}_{home}", **_stretch(st.button)):
                     st.session_state['selected_matchup'] = f"{away} @ {home}"
+                    # 종료된 경기라면 팝업(다이얼로그) 호출
+                    if pd.notna(row.get('away_score')) and pd.notna(row.get('home_score')):
+                        show_game_boxscore_modal(row.get('game_id'), away, home, row.get('away_score'), row.get('home_score'), selected_year)
                 
-                # 2. 버튼 위에 로고(+종료된 경기는 점수)를 끌어올려서 덮어쓰기
                 st.markdown(matchup_card_html(row, away_logo, home_logo), unsafe_allow_html=True)
                     
         if st.session_state['selected_matchup'] is None:
@@ -477,7 +665,7 @@ with st.spinner(f'{selected_year} 시즌 전체 리그 데이터를 불러오고
     try:
         full_df = load_and_calculate_stats(selected_year)
     except Exception as e:
-        st.error(f"{selected_year} 시즌 play-by-play 데이터를 불러오지 못했습니다. (시즌 데이터가 아직 없거나 네트워크 오류) / {e}")
+        st.error(f"{selected_year} 시즌 play-by-play 데이터를 불러오지 못했습니다. / {e}")
         st.stop()
     
     missing = [t for t in (away_team, home_team) if t not in full_df.index]
@@ -489,14 +677,13 @@ with st.spinner(f'{selected_year} 시즌 전체 리그 데이터를 불러오고
 # ==========================================
 # 팝업 및 카드박스 렌더링 헬퍼 함수
 # ==========================================
-_row_counter = [0]  # 스크립트가 재실행될 때마다 0으로 초기화됨 -> 행 키가 매번 같은 순서로 부여됨
+_row_counter = [0]
 
 def _row_container():
-    """스탯 한 행을 담는 컨테이너. key를 주면 st-key-statrow-N 클래스가 붙어 CSS로 카드 스타일링 가능."""
     _row_counter[0] += 1
     try:
         return st.container(key=f"statrow-{_row_counter[0]}")
-    except TypeError:  # key를 지원하지 않는 구버전 -> 기본 테두리 컨테이너로 대체
+    except TypeError:
         return st.container(border=True)
 
 def render_stat(label, away_val, away_str, away_rank_str, home_val, home_str, home_rank_str, higher_is_better=True, is_percent=False, stat_key=None):
@@ -595,14 +782,13 @@ def _seg_width_kwargs():
     return {}
 
 def section_nav(options, key):
-    """섹션 이동 핸들. segmented_control 미지원(구버전)이면 가로 라디오로 대체."""
     if hasattr(st, "segmented_control"):
         return st.segmented_control("섹션", options, default=options[0], key=key,
                                     label_visibility="collapsed", **_seg_width_kwargs())
     return st.radio("섹션", options, horizontal=True, key=key, label_visibility="collapsed")
 
 _choice = section_nav(SECTIONS, key="active_section")
-if _choice:  # 같은 버튼을 다시 눌러 선택이 해제(None)돼도 마지막 섹션을 유지
+if _choice:
     st.session_state['_last_section'] = _choice
 section = st.session_state.get('_last_section', SECTIONS[0])
 
